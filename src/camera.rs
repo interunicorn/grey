@@ -33,7 +33,7 @@ fn spawn_cameras(
             parent
                 .spawn((
                     CameraPivot,
-                    Transform::from_xyz(0.0, /*0.65*/ 2.0, 0.0),
+                    Transform::from_xyz(0.0, 0.65, 0.0),
                     Visibility::default(),
                 ))
                 .with_children(|pivot| {

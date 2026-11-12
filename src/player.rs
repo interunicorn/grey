@@ -169,3 +169,7 @@ fn move_player(
         transform.translation += movement * final_speed * time.delta_secs();
     }
 }
+
+pub fn get_velocity(query: &Query<&LinearVelocity, With<Player>>) -> Option<LinearVelocity> {
+    query.iter().next().copied()
+}

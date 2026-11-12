@@ -1,5 +1,6 @@
-use crate::app::RotatingCube;
+use crate::bodypart::BodyPart;
 use crate::camera::WorldModelCamera;
+use crate::player::Player;
 use crate::weapon::FireMode::SemiAuto;
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -62,7 +63,10 @@ fn shoot(
     camera: Single<&GlobalTransform, With<WorldModelCamera>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut weapons: Query<(&Weapon, &mut FireCooldown)>,
+    player_velocity: Single<&LinearVelocity, With<Player>>,
 ) {
+    let player_velocity = player_velocity.into_inner().0;
+
     for (weapon, mut cooldown) in &mut weapons {
         cooldown.0.tick(time.delta());
 
@@ -78,24 +82,57 @@ fn shoot(
         cooldown.0.reset();
 
         let direction = camera.forward();
+        let rotation = Quat::from_rotation_arc(Vec3::Z, *direction);
         let origin = camera.translation() + *direction * 0.5;
 
-        commands.spawn((
-            Bullet {
-                damage: weapon.damage,
-            },
-            BulletLifetime(Timer::from_seconds(3.0, TimerMode::Once)),
-            RigidBody::Dynamic,
-            Collider::sphere(0.02),
-            CollisionEventsEnabled,
-            Transform::from_translation(origin),
-            LinearVelocity(*direction * weapon.bullet_speed),
-            Mesh3d(meshes.add(Sphere::new(0.02))),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::srgb(0.3, 0.6, 0.9),
-                ..default()
-            })),
-        ));
+        let bullet = commands
+            .spawn((
+                Bullet {
+                    damage: weapon.damage,
+                },
+                BulletLifetime(Timer::from_seconds(3.0, TimerMode::Once)),
+                RigidBody::Dynamic,
+                Collider::sphere(0.02),
+                CollisionEventsEnabled,
+                LinearVelocity(*direction * weapon.bullet_speed + player_velocity),
+                Transform {
+                    translation: origin,
+                    rotation,
+                    ..default()
+                },
+                // Child mesh transforms are relative to this bullet entity.
+                // The hierarchy propagation system needs a GlobalTransform
+                // on the parent to compute their world transforms.
+                GlobalTransform::default(),
+            ))
+            .id();
+
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.3, 0.6, 0.9),
+            ..default()
+        });
+
+        let mesh_rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+
+        commands.entity(bullet).with_children(|parent| {
+            // Casing, centered on the bullet origin
+            parent.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.02, 0.06))),
+                MeshMaterial3d(material.clone()),
+                Transform::from_rotation(mesh_rotation),
+            ));
+
+            // Tip at the front (+Z)
+            parent.spawn((
+                Mesh3d(meshes.add(Cone::new(0.02, 0.03))),
+                MeshMaterial3d(material.clone()),
+                Transform {
+                    translation: Vec3::new(0.0, 0.0, 0.045),
+                    rotation: mesh_rotation,
+                    ..default()
+                },
+            ));
+        });
     }
 }
 
@@ -116,7 +153,7 @@ fn despawn_bullets(
 fn bullet_hits(
     mut collisions: MessageReader<CollisionStart>,
     bullets: Query<&Bullet>,
-    mut cubes: Query<&mut RotatingCube>,
+    mut body_parts: Query<&mut BodyPart>,
 ) {
     for collision in collisions.read() {
         for (bullet_entity, target) in [
@@ -124,10 +161,10 @@ fn bullet_hits(
             (collision.collider2, collision.collider1),
         ] {
             if let Ok(bullet) = bullets.get(bullet_entity)
-                && let Ok(mut cube) = cubes.get_mut(target)
+                && let Ok(mut body_part) = body_parts.get_mut(target)
             {
-                cube.health -= bullet.damage;
-                println!("Health: {}", cube.health);
+                body_part.take_damage(bullet.damage);
+                println!("Health: {}", body_part.health);
             }
         }
     }
